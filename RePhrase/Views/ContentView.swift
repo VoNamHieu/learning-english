@@ -1,14 +1,14 @@
 import SwiftUI
 
 struct ContentView: View {
-    @EnvironmentObject var viewModel: AppViewModel
-    
+    @ObservedObject var viewModel: AppViewModel
+
     var body: some View {
         ZStack {
             // Background
             AppTheme.background
                 .ignoresSafeArea()
-            
+
             // Content
             Group {
                 switch viewModel.currentScreen {
@@ -23,12 +23,13 @@ struct ContentView: View {
                 }
             }
             .animation(.easeInOut(duration: 0.3), value: viewModel.currentScreen)
-            
+
             // Loading overlay
             if viewModel.isLoading {
                 LoadingOverlay()
             }
         }
+        .environmentObject(viewModel)
         .alert("Error", isPresented: $viewModel.showError) {
             Button("OK", role: .cancel) {}
         } message: {
@@ -73,6 +74,5 @@ struct LoadingOverlay: View {
 }
 
 #Preview {
-    ContentView()
-        .environmentObject(AppViewModel())
+    ContentView(viewModel: AppViewModel())
 }
