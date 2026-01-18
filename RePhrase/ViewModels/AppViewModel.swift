@@ -184,15 +184,15 @@ class AppViewModel: ObservableObject {
         vocabBank[index] = item
         saveVocabBank()
     }
-        
-        var dueForReviewCount: Int {
-            vocabBank.filter { $0.nextReview <= Date() }.count
-        }
-        
-        var masteredCount: Int {
-            vocabBank.filter { $0.mastered }.count
-        }
-    
+
+    var dueForReviewCount: Int {
+        vocabBank.filter { $0.nextReview <= Date() }.count
+    }
+
+    var masteredCount: Int {
+        vocabBank.filter { $0.mastered }.count
+    }
+
     var sortedVocabBank: [VocabItem] {
         vocabBank.sorted { item1, item2 in
             let band1 = Double(item1.bandLevel.replacingOccurrences(of: "+", with: "")) ?? 6.0
