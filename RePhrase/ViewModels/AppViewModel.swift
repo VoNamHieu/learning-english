@@ -98,6 +98,7 @@ class AppViewModel: ObservableObject {
             // Update stats
             stats.totalScore += result.overallBand
             stats.sentenceCount += 1
+            updateStreak()
             stats.lastActiveDate = Date()
             saveStats()
             
@@ -141,42 +142,48 @@ class AppViewModel: ObservableObject {
         vocabBank.remove(atOffsets: offsets)
         saveVocabBank()
     }
+
+    func removeFromVocabBank(id: UUID) {
+        vocabBank.removeAll { $0.id == id }
+        saveVocabBank()
+    }
     
     func updateVocabReview(id: UUID, correct: Bool) {
-            guard let index = vocabBank.firstIndex(where: { $0.id == id }) else { return }
-            
-            var item = vocabBank[index]
-            
-            if correct {
-                // Increase interval: 1 day -> 3 days -> 7 days -> 14 days -> 30 days
-                let currentInterval = item.nextReview.timeIntervalSince(item.addedAt)
-                let dayInSeconds: TimeInterval = 24 * 60 * 60
-                
-                let newInterval: TimeInterval
-                switch currentInterval {
-                case ..<(2 * dayInSeconds):
-                    newInterval = 3 * dayInSeconds
-                case ..<(4 * dayInSeconds):
-                    newInterval = 7 * dayInSeconds
-                case ..<(10 * dayInSeconds):
-                    newInterval = 14 * dayInSeconds
-                case ..<(20 * dayInSeconds):
-                    newInterval = 30 * dayInSeconds
-                default:
-                    newInterval = 60 * dayInSeconds
-                    item.mastered = true
-                }
-                
-                item.nextReview = Date().addingTimeInterval(newInterval)
-            } else {
-                // Reset to 1 day
-                item.nextReview = Date().addingTimeInterval(24 * 60 * 60)
-                item.mastered = false
+        guard let index = vocabBank.firstIndex(where: { $0.id == id }) else { return }
+
+        var item = vocabBank[index]
+        let dayInSeconds: TimeInterval = 24 * 60 * 60
+
+        if correct {
+            // Increase interval: 1 day -> 3 days -> 7 days -> 14 days -> 30 days -> 60 days (mastered)
+            let newInterval: TimeInterval
+            switch item.reviewInterval {
+            case ..<(2 * dayInSeconds):
+                newInterval = 3 * dayInSeconds
+            case ..<(5 * dayInSeconds):
+                newInterval = 7 * dayInSeconds
+            case ..<(10 * dayInSeconds):
+                newInterval = 14 * dayInSeconds
+            case ..<(20 * dayInSeconds):
+                newInterval = 30 * dayInSeconds
+            default:
+                newInterval = 60 * dayInSeconds
+                item.mastered = true
             }
-            
-            vocabBank[index] = item
-            saveVocabBank()
+
+            item.reviewInterval = newInterval
+            item.nextReview = Date().addingTimeInterval(newInterval)
+        } else {
+            // Reset to 1 day
+            item.reviewInterval = dayInSeconds
+            item.nextReview = Date().addingTimeInterval(dayInSeconds)
+            item.mastered = false
         }
+
+        item.lastReviewedAt = Date()
+        vocabBank[index] = item
+        saveVocabBank()
+    }
         
         var dueForReviewCount: Int {
             vocabBank.filter { $0.nextReview <= Date() }.count
@@ -223,18 +230,22 @@ class AppViewModel: ObservableObject {
     
     private func updateStreak() {
         guard let lastActive = stats.lastActiveDate else {
-            stats.streak = 0
+            // First time practicing - start streak at 1
+            stats.streak = 1
             return
         }
-        
+
         let calendar = Calendar.current
-        let daysSinceLastActive = calendar.dateComponents([.day], from: lastActive, to: Date()).day ?? 0
-        
+        let daysSinceLastActive = calendar.dateComponents([.day], from: calendar.startOfDay(for: lastActive), to: calendar.startOfDay(for: Date())).day ?? 0
+
         if daysSinceLastActive > 1 {
-            stats.streak = 0
+            // Missed a day - reset streak to 1 (today counts)
+            stats.streak = 1
         } else if daysSinceLastActive == 1 {
+            // Consecutive day - increment streak
             stats.streak += 1
         }
+        // daysSinceLastActive == 0 means same day - keep streak unchanged
         saveStats()
     }
     

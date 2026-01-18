@@ -55,8 +55,8 @@ struct VocabBankView: View {
             } else {
                 VocabList(
                     items: viewModel.sortedVocabBank,
-                    onDelete: { offsets in
-                        viewModel.removeFromVocabBank(at: offsets)
+                    onDelete: { id in
+                        viewModel.removeFromVocabBank(id: id)
                     }
                 )
                 .padding(.top, 8)
@@ -168,8 +168,8 @@ struct EmptyVocabView: View {
 // MARK: - Vocab List
 struct VocabList: View {
     let items: [VocabItem]
-    let onDelete: (IndexSet) -> Void
-    
+    let onDelete: (UUID) -> Void
+
     var body: some View {
         List {
             ForEach(items) { item in
@@ -178,7 +178,12 @@ struct VocabList: View {
                     .listRowSeparator(.hidden)
                     .listRowInsets(EdgeInsets(top: 6, leading: 24, bottom: 6, trailing: 24))
             }
-            .onDelete(perform: onDelete)
+            .onDelete { offsets in
+                // Delete by ID to handle sorted list correctly
+                for index in offsets {
+                    onDelete(items[index].id)
+                }
+            }
         }
         .listStyle(.plain)
         .scrollContentBackground(.hidden)

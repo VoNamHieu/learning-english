@@ -112,8 +112,10 @@ struct VocabItem: Codable, Identifiable {
     let bandLevel: String
     let addedAt: Date
     var nextReview: Date
+    var lastReviewedAt: Date?
+    var reviewInterval: TimeInterval  // Current interval in seconds
     var mastered: Bool
-    
+
     init(from alternative: Alternative, original: String, context: String) {
         self.id = UUID()
         self.word = alternative.word
@@ -126,6 +128,8 @@ struct VocabItem: Codable, Identifiable {
         self.bandLevel = alternative.bandLevel
         self.addedAt = Date()
         self.nextReview = Date().addingTimeInterval(24 * 60 * 60)
+        self.lastReviewedAt = nil
+        self.reviewInterval = 24 * 60 * 60  // Start with 1 day
         self.mastered = false
     }
 }

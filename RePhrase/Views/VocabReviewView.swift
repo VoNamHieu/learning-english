@@ -583,8 +583,12 @@ struct FillBlankReviewView: View {
         .onAppear {
             isFocused = true
         }
+        .onChange(of: item.id) { _, _ in
+            resetState()
+            isFocused = true
+        }
     }
-    
+
     private func checkAnswer() {
         let isCorrect = userInput.trimmingCharacters(in: .whitespaces).lowercased() == item.word.lowercased()
         withAnimation {
