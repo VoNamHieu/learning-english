@@ -113,7 +113,7 @@ struct VocabItem: Codable, Identifiable {
     let addedAt: Date
     var nextReview: Date
     var lastReviewedAt: Date?
-    var reviewInterval: TimeInterval  // Current interval in seconds
+    var reviewInterval: TimeInterval
     var mastered: Bool
 
     init(from alternative: Alternative, original: String, context: String) {
@@ -129,8 +129,33 @@ struct VocabItem: Codable, Identifiable {
         self.addedAt = Date()
         self.nextReview = Date().addingTimeInterval(24 * 60 * 60)
         self.lastReviewedAt = nil
-        self.reviewInterval = 24 * 60 * 60  // Start with 1 day
+        self.reviewInterval = 24 * 60 * 60
         self.mastered = false
+    }
+
+    // Custom decoder for backward compatibility with existing saved data
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decode(UUID.self, forKey: .id)
+        word = try container.decode(String.self, forKey: .word)
+        pos = try container.decode(String.self, forKey: .pos)
+        meaning = try container.decode(String.self, forKey: .meaning)
+        meaningVi = try container.decode(String.self, forKey: .meaningVi)
+        example = try container.decode(String.self, forKey: .example)
+        original = try container.decode(String.self, forKey: .original)
+        context = try container.decode(String.self, forKey: .context)
+        bandLevel = try container.decode(String.self, forKey: .bandLevel)
+        addedAt = try container.decode(Date.self, forKey: .addedAt)
+        nextReview = try container.decode(Date.self, forKey: .nextReview)
+        mastered = try container.decode(Bool.self, forKey: .mastered)
+        // New fields with defaults for backward compatibility
+        lastReviewedAt = try container.decodeIfPresent(Date.self, forKey: .lastReviewedAt)
+        reviewInterval = try container.decodeIfPresent(TimeInterval.self, forKey: .reviewInterval) ?? (24 * 60 * 60)
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case id, word, pos, meaning, meaningVi, example, original, context
+        case bandLevel, addedAt, nextReview, lastReviewedAt, reviewInterval, mastered
     }
 }
 
