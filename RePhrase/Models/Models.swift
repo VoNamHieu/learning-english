@@ -8,11 +8,35 @@ struct Topic: Identifiable, Hashable {
     let color: String
     
     static let all: [Topic] = [
+        // Core IELTS Topics
         Topic(id: "work", label: "Work & Career", icon: "💼", color: "FF6B35"),
+        Topic(id: "education", label: "Education", icon: "🎓", color: "6C5CE7"),
+        Topic(id: "technology", label: "Technology", icon: "💻", color: "00B894"),
+        Topic(id: "environment", label: "Environment", icon: "🌍", color: "00CEC9"),
         Topic(id: "health", label: "Health & Wellness", icon: "🌿", color: "2EC4B6"),
+
+        // Social & Lifestyle
         Topic(id: "relationships", label: "Relationships", icon: "💬", color: "E63946"),
         Topic(id: "travel", label: "Travel & Adventure", icon: "✈️", color: "457B9D"),
-        Topic(id: "daily", label: "Daily Life", icon: "☀️", color: "F4A261")
+        Topic(id: "daily", label: "Daily Life", icon: "☀️", color: "F4A261"),
+        Topic(id: "food", label: "Food & Cuisine", icon: "🍜", color: "FDCB6E"),
+        Topic(id: "sports", label: "Sports & Fitness", icon: "⚽", color: "E17055"),
+
+        // Culture & Society
+        Topic(id: "culture", label: "Culture & Traditions", icon: "🎭", color: "A29BFE"),
+        Topic(id: "media", label: "Media & Entertainment", icon: "📺", color: "FD79A8"),
+        Topic(id: "social", label: "Social Issues", icon: "🤝", color: "636E72"),
+        Topic(id: "urbanization", label: "Cities & Urbanization", icon: "🏙️", color: "74B9FF"),
+
+        // Science & Economy
+        Topic(id: "science", label: "Science & Innovation", icon: "🔬", color: "0984E3"),
+        Topic(id: "economy", label: "Economy & Business", icon: "📈", color: "00B894"),
+        Topic(id: "transport", label: "Transport & Traffic", icon: "🚗", color: "B2BEC3"),
+
+        // Personal Development
+        Topic(id: "hobbies", label: "Hobbies & Interests", icon: "🎨", color: "E84393"),
+        Topic(id: "family", label: "Family & Home", icon: "🏠", color: "FFEAA7"),
+        Topic(id: "shopping", label: "Shopping & Consumerism", icon: "🛒", color: "81ECEC")
     ]
 }
 
