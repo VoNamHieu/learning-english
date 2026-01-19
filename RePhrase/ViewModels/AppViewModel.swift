@@ -98,8 +98,7 @@ class AppViewModel: ObservableObject {
             // Update stats
             stats.totalScore += result.overallBand
             stats.sentenceCount += 1
-            stats.lastActiveDate = Date()
-            saveStats()
+            updateStreak()
             
             currentScreen = .feedback
         } catch {
@@ -223,19 +222,34 @@ class AppViewModel: ObservableObject {
     }
     
     private func updateStreak() {
+        let calendar = Calendar.current
+        let today = calendar.startOfDay(for: Date())
+
         guard let lastActive = stats.lastActiveDate else {
-            stats.streak = 0
+            // First time user - start streak at 1
+            stats.streak = 1
+            stats.lastActiveDate = Date()
+            saveStats()
             return
         }
-        
-        let calendar = Calendar.current
-        let daysSinceLastActive = calendar.dateComponents([.day], from: lastActive, to: Date()).day ?? 0
-        
-        if daysSinceLastActive > 1 {
-            stats.streak = 0
+
+        let lastActiveDay = calendar.startOfDay(for: lastActive)
+        let daysSinceLastActive = calendar.dateComponents([.day], from: lastActiveDay, to: today).day ?? 0
+
+        if daysSinceLastActive == 0 {
+            // Same day - keep streak unchanged, but ensure it's at least 1
+            if stats.streak == 0 {
+                stats.streak = 1
+            }
         } else if daysSinceLastActive == 1 {
+            // Consecutive day - increment streak
             stats.streak += 1
+        } else {
+            // Missed days - reset streak to 1 (starting fresh today)
+            stats.streak = 1
         }
+
+        stats.lastActiveDate = Date()
         saveStats()
     }
     

@@ -160,9 +160,14 @@ class OpenAIService {
         guard let httpResponse = response as? HTTPURLResponse else {
             throw OpenAIError.invalidResponse
         }
-        
+
         guard httpResponse.statusCode == 200 else {
-            throw OpenAIError.httpError(statusCode: httpResponse.statusCode)
+            // Try to extract error details from response body
+            var errorDetail: String?
+            if let errorResponse = try? JSONDecoder().decode(OpenAIErrorResponse.self, from: data) {
+                errorDetail = errorResponse.error.message
+            }
+            throw OpenAIError.httpError(statusCode: httpResponse.statusCode, detail: errorDetail)
         }
         
         let openAIResponse = try JSONDecoder().decode(OpenAIResponse.self, from: data)
@@ -172,12 +177,46 @@ class OpenAIService {
         }
         
         // Clean response (remove markdown code blocks if present)
-        let cleanedContent = content
-            .replacingOccurrences(of: "```json", with: "")
-            .replacingOccurrences(of: "```", with: "")
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-        
+        let cleanedContent = cleanJSONResponse(content)
+
+        // Validate that it's valid JSON before returning
+        guard let jsonData = cleanedContent.data(using: .utf8),
+              (try? JSONSerialization.jsonObject(with: jsonData)) != nil else {
+            throw OpenAIError.parsingError(raw: content)
+        }
+
         return cleanedContent
+    }
+
+    /// Cleans OpenAI response by removing markdown formatting and extracting JSON
+    private func cleanJSONResponse(_ content: String) -> String {
+        var result = content.trimmingCharacters(in: .whitespacesAndNewlines)
+
+        // Remove various markdown code block formats
+        let codeBlockPatterns = [
+            "```json\\s*\\n?",   // ```json with optional newline
+            "```\\s*\\n?",       // ``` with optional newline
+            "\\n?```$",          // ending ```
+        ]
+
+        for pattern in codeBlockPatterns {
+            if let regex = try? NSRegularExpression(pattern: pattern, options: [.caseInsensitive]) {
+                result = regex.stringByReplacingMatches(
+                    in: result,
+                    options: [],
+                    range: NSRange(result.startIndex..., in: result),
+                    withTemplate: ""
+                )
+            }
+        }
+
+        // Try to extract JSON if it's wrapped in other text
+        if let jsonStart = result.firstIndex(of: "{"),
+           let jsonEnd = result.lastIndex(of: "}") {
+            result = String(result[jsonStart...jsonEnd])
+        }
+
+        return result.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 }
 
@@ -192,13 +231,23 @@ private struct SentenceResponse: Codable {
 
 private struct OpenAIResponse: Codable {
     let choices: [Choice]
-    
+
     struct Choice: Codable {
         let message: Message
     }
-    
+
     struct Message: Codable {
         let content: String
+    }
+}
+
+private struct OpenAIErrorResponse: Codable {
+    let error: OpenAIAPIError
+
+    struct OpenAIAPIError: Codable {
+        let message: String
+        let type: String?
+        let code: String?
     }
 }
 
@@ -207,9 +256,10 @@ enum OpenAIError: LocalizedError {
     case missingAPIKey
     case invalidURL
     case invalidResponse
-    case httpError(statusCode: Int)
+    case httpError(statusCode: Int, detail: String?)
     case noContent
-    
+    case parsingError(raw: String)
+
     var errorDescription: String? {
         switch self {
         case .missingAPIKey:
@@ -218,10 +268,30 @@ enum OpenAIError: LocalizedError {
             return "Invalid API URL"
         case .invalidResponse:
             return "Invalid response from API"
-        case .httpError(let statusCode):
-            return "HTTP Error: \(statusCode)"
+        case .httpError(let statusCode, let detail):
+            let baseMessage = httpErrorMessage(for: statusCode)
+            if let detail = detail {
+                return "\(baseMessage): \(detail)"
+            }
+            return baseMessage
         case .noContent:
             return "No content in response"
+        case .parsingError(let raw):
+            print("⚠️ Failed to parse response: \(raw.prefix(500))")
+            return "Failed to parse API response. Please try again."
+        }
+    }
+
+    private func httpErrorMessage(for statusCode: Int) -> String {
+        switch statusCode {
+        case 400: return "Bad request - please check your input"
+        case 401: return "Invalid API key - please check your configuration"
+        case 403: return "Access forbidden - API key may lack permissions"
+        case 404: return "API endpoint not found"
+        case 429: return "Rate limit exceeded - please wait and try again"
+        case 500: return "OpenAI server error - please try again later"
+        case 502, 503, 504: return "OpenAI service temporarily unavailable"
+        default: return "HTTP Error \(statusCode)"
         }
     }
 }
