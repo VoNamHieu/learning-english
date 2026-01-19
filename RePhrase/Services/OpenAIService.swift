@@ -3,9 +3,44 @@ import Foundation
 // MARK: - OpenAI Service
 class OpenAIService {
     static let shared = OpenAIService()
-    
+
     private let baseURL = "https://api.openai.com/v1/chat/completions"
-    
+
+    // MARK: - Optimized URLSession (HTTP/2, Connection Pooling, Keep-Alive)
+    private lazy var session: URLSession = {
+        let config = URLSessionConfiguration.default
+
+        // Connection pooling & keep-alive
+        config.httpMaximumConnectionsPerHost = 4
+        config.timeoutIntervalForRequest = 30
+        config.timeoutIntervalForResource = 60
+
+        // Enable HTTP/2 and pipelining
+        config.httpShouldUsePipelining = true
+
+        // Caching policy (tắt cache mặc định của URLSession vì ta tự quản lý)
+        config.requestCachePolicy = .reloadIgnoringLocalCacheData
+        config.urlCache = nil
+
+        // Tối ưu cho network
+        config.waitsForConnectivity = true
+        config.httpAdditionalHeaders = [
+            "Connection": "keep-alive",
+            "Accept-Encoding": "gzip, deflate"
+        ]
+
+        return URLSession(configuration: config)
+    }()
+
+    // MARK: - Response Cache (In-memory)
+    private let responseCache = NSCache<NSString, CachedResponse>()
+    private let cacheTTL: TimeInterval = 300 // 5 phút
+
+    // MARK: - Prefetch Queue
+    private var prefetchTask: Task<Sentence, Error>?
+    private var prefetchedSentence: Sentence?
+    private var prefetchKey: String?
+
     // Đọc API key từ Info.plist (được inject từ xcconfig)
     private var apiKey: String {
         guard let key = Bundle.main.infoDictionary?["OPENAI_API_KEY"] as? String,
@@ -16,11 +51,47 @@ class OpenAIService {
         }
         return key
     }
-    
-    private init() {}
+
+    private init() {
+        responseCache.countLimit = 50 // Giới hạn 50 cached responses
+    }
     
     // MARK: - Generate Vietnamese Sentence
     func generateSentence(topic: String, targetBand: String) async throws -> Sentence {
+        let key = "sentence_\(topic)_\(targetBand)"
+
+        // Check prefetched sentence
+        if let prefetched = prefetchedSentence, prefetchKey == key {
+            prefetchedSentence = nil
+            prefetchKey = nil
+            return prefetched
+        }
+
+        // Cancel any pending prefetch
+        prefetchTask?.cancel()
+
+        return try await fetchSentence(topic: topic, targetBand: targetBand)
+    }
+
+    // MARK: - Prefetch Next Sentence (gọi khi user đang dịch câu hiện tại)
+    func prefetchNextSentence(topic: String, targetBand: String) {
+        let key = "sentence_\(topic)_\(targetBand)"
+
+        // Đã prefetch rồi thì bỏ qua
+        if prefetchKey == key && prefetchedSentence != nil { return }
+
+        prefetchTask?.cancel()
+        prefetchTask = Task {
+            let sentence = try await fetchSentence(topic: topic, targetBand: targetBand)
+            if !Task.isCancelled {
+                prefetchedSentence = sentence
+                prefetchKey = key
+            }
+            return sentence
+        }
+    }
+
+    private func fetchSentence(topic: String, targetBand: String) async throws -> Sentence {
         let prompt = """
         Generate a Vietnamese sentence for English translation practice.
 
@@ -42,7 +113,7 @@ class OpenAIService {
           "keyStructures": ["structure1", "structure2"]
         }
         """
-        
+
         let response: String = try await sendRequest(prompt: prompt, config: .lessonContent)
 
         guard let data = response.data(using: .utf8) else {
@@ -165,8 +236,17 @@ class OpenAIService {
         )
     }
 
-    // MARK: - Send Request (with retry for JSON)
-    private func sendRequest(prompt: String, config: RequestConfig, maxRetries: Int = 2) async throws -> String {
+    // MARK: - Send Request (with retry for JSON and caching)
+    private func sendRequest(prompt: String, config: RequestConfig, maxRetries: Int = 2, useCache: Bool = false) async throws -> String {
+        // Check cache (chỉ dùng cho những request có thể cache)
+        let cacheKey = "\(config.model)_\(prompt.hashValue)" as NSString
+        if useCache, let cached = responseCache.object(forKey: cacheKey) {
+            if Date().timeIntervalSince(cached.timestamp) < cacheTTL {
+                return cached.response
+            }
+            responseCache.removeObject(forKey: cacheKey)
+        }
+
         var lastError: Error?
 
         for attempt in 0...maxRetries {
@@ -180,6 +260,10 @@ class OpenAIService {
                 // Validate JSON
                 if let data = response.data(using: .utf8),
                    let _ = try? JSONSerialization.jsonObject(with: data) {
+                    // Cache response nếu cần
+                    if useCache {
+                        responseCache.setObject(CachedResponse(response: response), forKey: cacheKey)
+                    }
                     return response
                 }
 
@@ -226,7 +310,8 @@ class OpenAIService {
 
         request.httpBody = try JSONSerialization.data(withJSONObject: body)
 
-        let (data, response) = try await URLSession.shared.data(for: request)
+        // Sử dụng optimized session thay vì URLSession.shared
+        let (data, response) = try await session.data(for: request)
 
         guard let httpResponse = response as? HTTPURLResponse else {
             throw OpenAIError.invalidResponse
@@ -250,6 +335,77 @@ class OpenAIService {
 
         return cleanedContent
     }
+
+    // MARK: - Streaming Request (cho Interactive Chat - hiện UX realtime)
+    func sendStreamingRequest(
+        prompt: String,
+        config: RequestConfig = .interactiveChat,
+        onChunk: @escaping (String) -> Void
+    ) async throws -> String {
+        guard !apiKey.isEmpty else {
+            throw OpenAIError.missingAPIKey
+        }
+
+        guard let url = URL(string: baseURL) else {
+            throw OpenAIError.invalidURL
+        }
+
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.addValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
+        request.addValue("application/json", forHTTPHeaderField: "Content-Type")
+
+        var messages: [[String: String]] = []
+        if let systemMessage = config.systemMessage {
+            messages.append(["role": "system", "content": systemMessage])
+        }
+        messages.append(["role": "user", "content": prompt])
+
+        let body: [String: Any] = [
+            "model": config.model,
+            "messages": messages,
+            "max_tokens": config.maxTokens,
+            "temperature": config.temperature,
+            "stream": true
+        ]
+
+        request.httpBody = try JSONSerialization.data(withJSONObject: body)
+
+        let (bytes, response) = try await session.bytes(for: request)
+
+        guard let httpResponse = response as? HTTPURLResponse, httpResponse.statusCode == 200 else {
+            throw OpenAIError.invalidResponse
+        }
+
+        var fullContent = ""
+
+        for try await line in bytes.lines {
+            // SSE format: data: {...}
+            guard line.hasPrefix("data: ") else { continue }
+            let jsonString = String(line.dropFirst(6))
+
+            if jsonString == "[DONE]" { break }
+
+            guard let jsonData = jsonString.data(using: .utf8),
+                  let chunk = try? JSONDecoder().decode(StreamChunk.self, from: jsonData),
+                  let content = chunk.choices.first?.delta.content else {
+                continue
+            }
+
+            fullContent += content
+            onChunk(content)
+        }
+
+        return fullContent
+    }
+
+    // MARK: - Clear Cache
+    func clearCache() {
+        responseCache.removeAllObjects()
+        prefetchedSentence = nil
+        prefetchKey = nil
+        prefetchTask?.cancel()
+    }
 }
 
 // MARK: - Response Models
@@ -263,13 +419,37 @@ private struct SentenceResponse: Codable {
 
 private struct OpenAIResponse: Codable {
     let choices: [Choice]
-    
+
     struct Choice: Codable {
         let message: Message
     }
-    
+
     struct Message: Codable {
         let content: String
+    }
+}
+
+// MARK: - Streaming Response Model
+private struct StreamChunk: Codable {
+    let choices: [StreamChoice]
+
+    struct StreamChoice: Codable {
+        let delta: Delta
+    }
+
+    struct Delta: Codable {
+        let content: String?
+    }
+}
+
+// MARK: - Cache Model
+private class CachedResponse {
+    let response: String
+    let timestamp: Date
+
+    init(response: String) {
+        self.response = response
+        self.timestamp = Date()
     }
 }
 
