@@ -43,15 +43,15 @@ class OpenAIService {
         }
         """
         
-        let response: String = try await sendRequest(prompt: prompt)
-        
+        let response: String = try await sendRequest(prompt: prompt, config: .lessonContent)
+
         guard let data = response.data(using: .utf8) else {
             throw OpenAIError.invalidResponse
         }
-        
+
         let decoder = JSONDecoder()
         let sentenceResponse = try decoder.decode(SentenceResponse.self, from: data)
-        
+
         return Sentence(
             vietnamese: sentenceResponse.vietnamese,
             topic: sentenceResponse.topic,
@@ -60,7 +60,7 @@ class OpenAIService {
             keyStructures: sentenceResponse.keyStructures
         )
     }
-    
+
     // MARK: - Get Feedback
     func getFeedback(vietnamese: String, translation: String, targetBand: String) async throws -> Feedback {
         let prompt = """
@@ -116,67 +116,138 @@ class OpenAIService {
           "explanation": "Brief explanation in Vietnamese focusing on key improvements needed to reach higher band"
         }
 
-        Be encouraging but accurate to IELTS standards. Focus on vocabulary and grammar upgrades.
+        Be strict and accurate to IELTS standards. Focus on vocabulary and grammar upgrades.
         """
-        
-        let response: String = try await sendRequest(prompt: prompt)
-        
+
+        let response: String = try await sendRequest(prompt: prompt, config: .examinerFeedback)
+
         guard let data = response.data(using: .utf8) else {
             throw OpenAIError.invalidResponse
         }
-        
+
         let decoder = JSONDecoder()
         return try decoder.decode(Feedback.self, from: data)
     }
     
-    // MARK: - Send Request
-    private func sendRequest(prompt: String) async throws -> String {
+    // MARK: - Request Configuration
+    struct RequestConfig {
+        let model: String
+        let temperature: Double
+        let systemMessage: String?
+        let maxTokens: Int
+        let stopSequences: [String]?
+
+        // Preset cho Lesson content (generateSentence)
+        static let lessonContent = RequestConfig(
+            model: "gpt-4.1",
+            temperature: 0.4,
+            systemMessage: "You are a strict JSON generator. If output is not valid JSON, it is considered a failure. Return ONLY valid JSON without any markdown formatting or explanation.",
+            maxTokens: 1000,
+            stopSequences: ["\n\n"]
+        )
+
+        // Preset cho Examiner feedback (getFeedback)
+        static let examinerFeedback = RequestConfig(
+            model: "gpt-4.1",
+            temperature: 0.2,
+            systemMessage: "You are a strict IELTS examiner and JSON generator. Score accurately according to IELTS rubric without encouraging bias. If output is not valid JSON, it is considered a failure. Return ONLY valid JSON without any markdown formatting or explanation.",
+            maxTokens: 2000,
+            stopSequences: ["\n\n"]
+        )
+
+        // Preset cho Interactive/Chat (speaking practice, tutor)
+        static let interactiveChat = RequestConfig(
+            model: "gpt-4o",
+            temperature: 0.7,
+            systemMessage: nil,
+            maxTokens: 2000,
+            stopSequences: nil
+        )
+    }
+
+    // MARK: - Send Request (with retry for JSON)
+    private func sendRequest(prompt: String, config: RequestConfig, maxRetries: Int = 2) async throws -> String {
+        var lastError: Error?
+
+        for attempt in 0...maxRetries {
+            do {
+                let retryPrompt = attempt > 0
+                    ? "Your previous response was invalid JSON. Regenerate strictly.\n\n\(prompt)"
+                    : prompt
+
+                let response = try await sendSingleRequest(prompt: retryPrompt, config: config)
+
+                // Validate JSON
+                if let data = response.data(using: .utf8),
+                   let _ = try? JSONSerialization.jsonObject(with: data) {
+                    return response
+                }
+
+                lastError = OpenAIError.invalidJSON
+            } catch {
+                lastError = error
+            }
+        }
+
+        throw lastError ?? OpenAIError.invalidResponse
+    }
+
+    private func sendSingleRequest(prompt: String, config: RequestConfig) async throws -> String {
         guard !apiKey.isEmpty else {
             throw OpenAIError.missingAPIKey
         }
-        
+
         guard let url = URL(string: baseURL) else {
             throw OpenAIError.invalidURL
         }
-        
+
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
         request.addValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
         request.addValue("application/json", forHTTPHeaderField: "Content-Type")
-        
-        let body: [String: Any] = [
-            "model": "gpt-4o",
-            "messages": [
-                ["role": "user", "content": prompt]
-            ],
-            "max_tokens": 2000,
-            "temperature": 0.7
+
+        // Build messages array
+        var messages: [[String: String]] = []
+        if let systemMessage = config.systemMessage {
+            messages.append(["role": "system", "content": systemMessage])
+        }
+        messages.append(["role": "user", "content": prompt])
+
+        var body: [String: Any] = [
+            "model": config.model,
+            "messages": messages,
+            "max_tokens": config.maxTokens,
+            "temperature": config.temperature
         ]
-        
+
+        if let stopSequences = config.stopSequences {
+            body["stop"] = stopSequences
+        }
+
         request.httpBody = try JSONSerialization.data(withJSONObject: body)
-        
+
         let (data, response) = try await URLSession.shared.data(for: request)
-        
+
         guard let httpResponse = response as? HTTPURLResponse else {
             throw OpenAIError.invalidResponse
         }
-        
+
         guard httpResponse.statusCode == 200 else {
             throw OpenAIError.httpError(statusCode: httpResponse.statusCode)
         }
-        
+
         let openAIResponse = try JSONDecoder().decode(OpenAIResponse.self, from: data)
-        
+
         guard let content = openAIResponse.choices.first?.message.content else {
             throw OpenAIError.noContent
         }
-        
+
         // Clean response (remove markdown code blocks if present)
         let cleanedContent = content
             .replacingOccurrences(of: "```json", with: "")
             .replacingOccurrences(of: "```", with: "")
             .trimmingCharacters(in: .whitespacesAndNewlines)
-        
+
         return cleanedContent
     }
 }
@@ -207,9 +278,10 @@ enum OpenAIError: LocalizedError {
     case missingAPIKey
     case invalidURL
     case invalidResponse
+    case invalidJSON
     case httpError(statusCode: Int)
     case noContent
-    
+
     var errorDescription: String? {
         switch self {
         case .missingAPIKey:
@@ -218,6 +290,8 @@ enum OpenAIError: LocalizedError {
             return "Invalid API URL"
         case .invalidResponse:
             return "Invalid response from API"
+        case .invalidJSON:
+            return "Invalid JSON response after multiple retries"
         case .httpError(let statusCode):
             return "HTTP Error: \(statusCode)"
         case .noContent:
