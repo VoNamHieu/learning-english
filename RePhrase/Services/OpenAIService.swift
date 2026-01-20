@@ -103,6 +103,7 @@ class OpenAIService {
         - Complexity appropriate for someone aiming for Band \(targetBand)
         - Should allow for interesting vocabulary upgrades when translated
         - Include some idiomatic expressions or common phrases
+        - Be creative and varied in sentence structure\(historySection)
 
         Return ONLY valid JSON (no markdown, no backticks):
         {
@@ -318,7 +319,12 @@ class OpenAIService {
         }
 
         guard httpResponse.statusCode == 200 else {
-            throw OpenAIError.httpError(statusCode: httpResponse.statusCode)
+            // Try to extract error details from response body
+            var errorDetail: String?
+            if let errorResponse = try? JSONDecoder().decode(OpenAIErrorResponse.self, from: data) {
+                errorDetail = errorResponse.error.message
+            }
+            throw OpenAIError.httpError(statusCode: httpResponse.statusCode, detail: errorDetail)
         }
 
         let openAIResponse = try JSONDecoder().decode(OpenAIResponse.self, from: data)
@@ -476,6 +482,22 @@ enum OpenAIError: LocalizedError {
             return "HTTP Error: \(statusCode)"
         case .noContent:
             return "No content in response"
+        case .parsingError(let raw):
+            print("⚠️ Failed to parse response: \(raw.prefix(500))")
+            return "Failed to parse API response. Please try again."
+        }
+    }
+
+    private func httpErrorMessage(for statusCode: Int) -> String {
+        switch statusCode {
+        case 400: return "Bad request - please check your input"
+        case 401: return "Invalid API key - please check your configuration"
+        case 403: return "Access forbidden - API key may lack permissions"
+        case 404: return "API endpoint not found"
+        case 429: return "Rate limit exceeded - please wait and try again"
+        case 500: return "OpenAI server error - please try again later"
+        case 502, 503, 504: return "OpenAI service temporarily unavailable"
+        default: return "HTTP Error \(statusCode)"
         }
     }
 }

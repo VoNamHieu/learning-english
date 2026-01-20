@@ -64,21 +64,21 @@ struct VocabReviewView: View {
                     // Review Content
                     TabView(selection: $selectedMode) {
                         FlashcardReviewView(
-                            item: currentItem,
+                            item: safeCurrentItem,
                             onCorrect: markCorrect,
                             onWrong: markWrong
                         )
                         .tag(ReviewMode.flashcard)
-                        
+
                         FillBlankReviewView(
-                            item: currentItem,
+                            item: safeCurrentItem,
                             onCorrect: markCorrect,
                             onWrong: markWrong
                         )
                         .tag(ReviewMode.fillBlank)
-                        
+
                         MultipleChoiceReviewView(
-                            item: currentItem,
+                            item: safeCurrentItem,
                             allItems: itemsToReview,
                             onCorrect: markCorrect,
                             onWrong: markWrong
@@ -95,15 +95,19 @@ struct VocabReviewView: View {
     }
     
     // MARK: - Computed Properties
-    private var currentItem: VocabItem {
+    private var currentItem: VocabItem? {
         guard session.currentIndex < itemsToReview.count else {
-            return itemsToReview.first ?? VocabItem(
-                from: Alternative(word: "", pos: "", meaning: "", example: "", meaningVi: "", bandLevel: ""),
-                original: "",
-                context: ""
-            )
+            return nil
         }
         return itemsToReview[session.currentIndex]
+    }
+
+    private var safeCurrentItem: VocabItem {
+        currentItem ?? VocabItem(
+            from: Alternative(word: "—", pos: "—", meaning: "No item available", example: "—", meaningVi: "Không có từ vựng", bandLevel: "—"),
+            original: "—",
+            context: "—"
+        )
     }
     
     private var progress: Double {
@@ -120,16 +124,18 @@ struct VocabReviewView: View {
     }
     
     private func markCorrect() {
+        guard let item = currentItem else { return }
         session.correctCount += 1
-        session.reviewedItems.insert(currentItem.id)
-        viewModel.updateVocabReview(id: currentItem.id, correct: true)
+        session.reviewedItems.insert(item.id)
+        viewModel.updateVocabReview(id: item.id, correct: true)
         moveToNext()
     }
-    
+
     private func markWrong() {
+        guard let item = currentItem else { return }
         session.wrongCount += 1
-        session.reviewedItems.insert(currentItem.id)
-        viewModel.updateVocabReview(id: currentItem.id, correct: false)
+        session.reviewedItems.insert(item.id)
+        viewModel.updateVocabReview(id: item.id, correct: false)
         moveToNext()
     }
     
@@ -707,17 +713,35 @@ struct MultipleChoiceReviewView: View {
         var wrongOptions = allItems
             .filter { $0.id != item.id }
             .map { $0.meaningVi.isEmpty ? $0.meaning : $0.meaningVi }
+            .filter { $0 != correctAnswer }
             .shuffled()
             .prefix(3)
-        
-        // If not enough options, add some generic ones
-        let genericOptions = ["to be very happy", "to feel anxious", "to work hard", "to rest peacefully", "to speak loudly"]
-        while wrongOptions.count < 3 {
-            if let generic = genericOptions.randomElement(), !wrongOptions.contains(generic) && generic != correctAnswer {
+
+        // If not enough options, add bilingual generic fallbacks
+        let genericOptionsVi = ["rất vui vẻ", "cảm thấy lo lắng", "làm việc chăm chỉ", "nghỉ ngơi yên bình", "nói to", "rất mệt mỏi", "rất buồn", "rất tức giận", "rất hài lòng", "rất bất ngờ"]
+        let genericOptionsEn = ["very happy", "feeling anxious", "working hard", "resting peacefully", "speaking loudly", "very tired", "very sad", "very angry", "very satisfied", "very surprised"]
+
+        // Decide which language fallback to use based on the correct answer
+        let genericOptions = item.meaningVi.isEmpty ? genericOptionsEn : genericOptionsVi
+        var usedGenerics = Set<String>()
+
+        while wrongOptions.count < 3 && usedGenerics.count < genericOptions.count {
+            if let generic = genericOptions.randomElement(),
+               !usedGenerics.contains(generic),
+               !wrongOptions.contains(generic),
+               generic != correctAnswer {
                 wrongOptions.append(generic)
+                usedGenerics.insert(generic)
+            } else {
+                // Try all generics sequentially if random fails
+                for fallback in genericOptions where !usedGenerics.contains(fallback) && !wrongOptions.contains(fallback) && fallback != correctAnswer {
+                    wrongOptions.append(fallback)
+                    usedGenerics.insert(fallback)
+                    if wrongOptions.count >= 3 { break }
+                }
             }
         }
-        
+
         options = ([correctAnswer] + wrongOptions).shuffled()
     }
     
