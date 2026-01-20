@@ -10,6 +10,24 @@ class OpenAIService {
     private var recentSentences: [String] = []
     private let maxHistorySize = 10
 
+    // MARK: - Debug Mode (for testing error handling)
+    #if DEBUG
+    enum DebugErrorType {
+        case none
+        case missingAPIKey
+        case networkError
+        case rateLimited
+        case invalidResponse
+        case serverError
+    }
+
+    /// Set this to simulate specific API errors for testing
+    var debugSimulateError: DebugErrorType = .none
+
+    /// Force use fallback sentences (bypass API completely)
+    var debugForceFallback: Bool = false
+    #endif
+
     // Đọc API key từ Info.plist (được inject từ xcconfig)
     private var apiKey: String {
         guard let key = Bundle.main.infoDictionary?["OPENAI_API_KEY"] as? String,
@@ -164,14 +182,42 @@ class OpenAIService {
     
     // MARK: - Send Request
     private func sendRequest(prompt: String) async throws -> String {
+        // Debug: Simulate errors for testing
+        #if DEBUG
+        if debugForceFallback {
+            print("🧪 DEBUG: Force fallback enabled, throwing error")
+            throw OpenAIError.httpError(statusCode: 500, detail: "Debug: Force fallback enabled")
+        }
+
+        switch debugSimulateError {
+        case .none:
+            break // Continue with normal request
+        case .missingAPIKey:
+            print("🧪 DEBUG: Simulating missing API key error")
+            throw OpenAIError.missingAPIKey
+        case .networkError:
+            print("🧪 DEBUG: Simulating network error")
+            throw URLError(.notConnectedToInternet)
+        case .rateLimited:
+            print("🧪 DEBUG: Simulating rate limit error (429)")
+            throw OpenAIError.httpError(statusCode: 429, detail: "Debug: Rate limit exceeded")
+        case .invalidResponse:
+            print("🧪 DEBUG: Simulating invalid response")
+            throw OpenAIError.parsingError(raw: "Debug: Invalid JSON response")
+        case .serverError:
+            print("🧪 DEBUG: Simulating server error (500)")
+            throw OpenAIError.httpError(statusCode: 500, detail: "Debug: Internal server error")
+        }
+        #endif
+
         guard !apiKey.isEmpty else {
             throw OpenAIError.missingAPIKey
         }
-        
+
         guard let url = URL(string: baseURL) else {
             throw OpenAIError.invalidURL
         }
-        
+
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
         request.addValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")

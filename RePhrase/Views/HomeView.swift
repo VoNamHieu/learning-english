@@ -2,22 +2,40 @@ import SwiftUI
 
 struct HomeView: View {
     @EnvironmentObject var viewModel: AppViewModel
-    
+    #if DEBUG
+    @State private var showDebugSettings = false
+    #endif
+
     var body: some View {
         ScrollView {
             VStack(spacing: 24) {
                 // Logo Section
                 VStack(spacing: 8) {
-                    Text("RePhrase")
-                        .font(.system(size: 42, weight: .bold))
-                        .foregroundStyle(
-                            LinearGradient(
-                                colors: [Color(hex: "667eea"), Color(hex: "764ba2"), Color(hex: "f093fb")],
-                                startPoint: .leading,
-                                endPoint: .trailing
+                    HStack {
+                        Spacer()
+                        Text("RePhrase")
+                            .font(.system(size: 42, weight: .bold))
+                            .foregroundStyle(
+                                LinearGradient(
+                                    colors: [Color(hex: "667eea"), Color(hex: "764ba2"), Color(hex: "f093fb")],
+                                    startPoint: .leading,
+                                    endPoint: .trailing
+                                )
                             )
-                        )
-                    
+                        Spacer()
+
+                        // Debug button (only in DEBUG builds)
+                        #if DEBUG
+                        Button {
+                            showDebugSettings = true
+                        } label: {
+                            Image(systemName: "ant.fill")
+                                .font(.title2)
+                                .foregroundColor(.orange)
+                        }
+                        #endif
+                    }
+
                     Text("Transform your English, one sentence at a time")
                         .font(.subheadline)
                         .foregroundColor(AppTheme.textSecondary)
@@ -56,6 +74,11 @@ struct HomeView: View {
             .padding(.horizontal, 24)
             .padding(.bottom, 40)
         }
+        #if DEBUG
+        .sheet(isPresented: $showDebugSettings) {
+            DebugSettingsView()
+        }
+        #endif
     }
 }
 
