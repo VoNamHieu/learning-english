@@ -41,6 +41,28 @@ class OpenAIService {
     private var prefetchedSentence: Sentence?
     private var prefetchKey: String?
 
+    // MARK: - Sentence History (avoid repetition)
+    private var recentSentences: [String] = []
+    private let maxHistorySize = 10
+
+    // MARK: - Debug Mode (for testing error handling)
+    #if DEBUG
+    enum DebugErrorType {
+        case none
+        case missingAPIKey
+        case networkError
+        case rateLimited
+        case invalidResponse
+        case serverError
+    }
+
+    /// Set this to simulate specific API errors for testing
+    var debugSimulateError: DebugErrorType = .none
+
+    /// Force use fallback sentences (bypass API completely)
+    var debugForceFallback: Bool = false
+    #endif
+
     // Đọc API key từ Info.plist (được inject từ xcconfig)
     private var apiKey: String {
         guard let key = Bundle.main.infoDictionary?["OPENAI_API_KEY"] as? String,
@@ -55,7 +77,7 @@ class OpenAIService {
     private init() {
         responseCache.countLimit = 50 // Giới hạn 50 cached responses
     }
-    
+
     // MARK: - Generate Vietnamese Sentence
     func generateSentence(topic: String, targetBand: String) async throws -> Sentence {
         let key = "sentence_\(topic)_\(targetBand)"
@@ -64,13 +86,16 @@ class OpenAIService {
         if let prefetched = prefetchedSentence, prefetchKey == key {
             prefetchedSentence = nil
             prefetchKey = nil
+            addToHistory(prefetched.vietnamese)
             return prefetched
         }
 
         // Cancel any pending prefetch
         prefetchTask?.cancel()
 
-        return try await fetchSentence(topic: topic, targetBand: targetBand)
+        let sentence = try await fetchSentence(topic: topic, targetBand: targetBand)
+        addToHistory(sentence.vietnamese)
+        return sentence
     }
 
     // MARK: - Prefetch Next Sentence (gọi khi user đang dịch câu hiện tại)
@@ -91,7 +116,30 @@ class OpenAIService {
         }
     }
 
+    /// Add sentence to history, maintaining max size
+    private func addToHistory(_ sentence: String) {
+        recentSentences.append(sentence)
+        if recentSentences.count > maxHistorySize {
+            recentSentences.removeFirst()
+        }
+    }
+
     private func fetchSentence(topic: String, targetBand: String) async throws -> Sentence {
+        // Build history exclusion list
+        let historySection: String
+        if recentSentences.isEmpty {
+            historySection = ""
+        } else {
+            let historyList = recentSentences.map { "- \($0)" }.joined(separator: "\n")
+            historySection = """
+
+        IMPORTANT - Do NOT generate any of these previously used sentences:
+        \(historyList)
+
+        Generate a COMPLETELY DIFFERENT sentence with different vocabulary and structure.
+        """
+        }
+
         let prompt = """
         Generate a Vietnamese sentence for English translation practice.
 
@@ -200,7 +248,7 @@ class OpenAIService {
         let decoder = JSONDecoder()
         return try decoder.decode(Feedback.self, from: data)
     }
-    
+
     // MARK: - Request Configuration
     struct RequestConfig {
         let model: String
@@ -239,6 +287,34 @@ class OpenAIService {
 
     // MARK: - Send Request (with retry for JSON and caching)
     private func sendRequest(prompt: String, config: RequestConfig, maxRetries: Int = 2, useCache: Bool = false) async throws -> String {
+        // Debug: Simulate errors for testing
+        #if DEBUG
+        if debugForceFallback {
+            print("🧪 DEBUG: Force fallback enabled, throwing error")
+            throw OpenAIError.httpError(statusCode: 500, detail: "Debug: Force fallback enabled")
+        }
+
+        switch debugSimulateError {
+        case .none:
+            break
+        case .missingAPIKey:
+            print("🧪 DEBUG: Simulating missing API key error")
+            throw OpenAIError.missingAPIKey
+        case .networkError:
+            print("🧪 DEBUG: Simulating network error")
+            throw URLError(.notConnectedToInternet)
+        case .rateLimited:
+            print("🧪 DEBUG: Simulating rate limit error (429)")
+            throw OpenAIError.httpError(statusCode: 429, detail: "Debug: Rate limit exceeded")
+        case .invalidResponse:
+            print("🧪 DEBUG: Simulating invalid response")
+            throw OpenAIError.parsingError(raw: "Debug: Invalid JSON response")
+        case .serverError:
+            print("🧪 DEBUG: Simulating server error (500)")
+            throw OpenAIError.httpError(statusCode: 500, detail: "Debug: Internal server error")
+        }
+        #endif
+
         // Check cache (chỉ dùng cho những request có thể cache)
         let cacheKey = "\(config.model)_\(prompt.hashValue)" as NSString
         if useCache, let cached = responseCache.object(forKey: cacheKey) {
@@ -411,6 +487,7 @@ class OpenAIService {
         prefetchedSentence = nil
         prefetchKey = nil
         prefetchTask?.cancel()
+        recentSentences.removeAll()
     }
 }
 
@@ -432,6 +509,16 @@ private struct OpenAIResponse: Codable {
 
     struct Message: Codable {
         let content: String
+    }
+}
+
+private struct OpenAIErrorResponse: Codable {
+    let error: OpenAIAPIError
+
+    struct OpenAIAPIError: Codable {
+        let message: String
+        let type: String?
+        let code: String?
     }
 }
 
@@ -465,8 +552,9 @@ enum OpenAIError: LocalizedError {
     case invalidURL
     case invalidResponse
     case invalidJSON
-    case httpError(statusCode: Int)
+    case httpError(statusCode: Int, detail: String?)
     case noContent
+    case parsingError(raw: String)
 
     var errorDescription: String? {
         switch self {
@@ -478,8 +566,12 @@ enum OpenAIError: LocalizedError {
             return "Invalid response from API"
         case .invalidJSON:
             return "Invalid JSON response after multiple retries"
-        case .httpError(let statusCode):
-            return "HTTP Error: \(statusCode)"
+        case .httpError(let statusCode, let detail):
+            let baseMessage = httpErrorMessage(for: statusCode)
+            if let detail = detail {
+                return "\(baseMessage): \(detail)"
+            }
+            return baseMessage
         case .noContent:
             return "No content in response"
         case .parsingError(let raw):
