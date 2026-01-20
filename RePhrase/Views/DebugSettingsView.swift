@@ -2,72 +2,217 @@
 import SwiftUI
 
 struct DebugSettingsView: View {
-    @State private var selectedError: OpenAIService.DebugErrorType = .none
+    @State private var apiKeyStatus: String = "Chưa kiểm tra"
+    @State private var apiKeyColor: Color = .secondary
+    @State private var isTestingAPI: Bool = false
+    @State private var testResult: String = ""
+    @State private var testResultColor: Color = .secondary
+    @State private var rawResponse: String = ""
+    @State private var showRawResponse: Bool = false
+
+    // Error simulation (optional)
     @State private var forceFallback: Bool = false
 
     var body: some View {
         NavigationView {
             List {
-                Section("API Error Simulation") {
-                    Toggle("Force Fallback (bypass API)", isOn: $forceFallback)
+                // MARK: - API Status Check
+                Section("🔑 API Key Status") {
+                    HStack {
+                        Text("Status")
+                        Spacer()
+                        Text(apiKeyStatus)
+                            .foregroundColor(apiKeyColor)
+                            .fontWeight(.medium)
+                    }
+
+                    Button("Kiểm tra API Key") {
+                        checkAPIKey()
+                    }
+                }
+
+                // MARK: - Test Real API
+                Section("🌐 Test API thật") {
+                    Button(action: testRealAPI) {
+                        HStack {
+                            Text("Gọi API tạo câu")
+                            Spacer()
+                            if isTestingAPI {
+                                ProgressView()
+                                    .scaleEffect(0.8)
+                            }
+                        }
+                    }
+                    .disabled(isTestingAPI)
+
+                    if !testResult.isEmpty {
+                        VStack(alignment: .leading, spacing: 8) {
+                            Text("Kết quả:")
+                                .font(.caption)
+                                .foregroundColor(.secondary)
+                            Text(testResult)
+                                .font(.body)
+                                .foregroundColor(testResultColor)
+                        }
+                        .padding(.vertical, 4)
+                    }
+
+                    if !rawResponse.isEmpty {
+                        Toggle("Xem raw response", isOn: $showRawResponse)
+
+                        if showRawResponse {
+                            ScrollView {
+                                Text(rawResponse)
+                                    .font(.system(.caption, design: .monospaced))
+                                    .foregroundColor(.secondary)
+                                    .textSelection(.enabled)
+                            }
+                            .frame(maxHeight: 200)
+                        }
+                    }
+                }
+
+                // MARK: - Test Feedback API
+                Section("📝 Test Feedback API") {
+                    Button(action: testFeedbackAPI) {
+                        HStack {
+                            Text("Gọi API chấm điểm")
+                            Spacer()
+                            if isTestingAPI {
+                                ProgressView()
+                                    .scaleEffect(0.8)
+                            }
+                        }
+                    }
+                    .disabled(isTestingAPI)
+                }
+
+                // MARK: - Force Fallback (for offline testing)
+                Section("🔧 Chế độ Offline") {
+                    Toggle("Dùng câu fallback (không gọi API)", isOn: $forceFallback)
                         .onChange(of: forceFallback) { _, newValue in
                             OpenAIService.shared.debugForceFallback = newValue
                         }
 
-                    Picker("Simulate Error Type", selection: $selectedError) {
-                        Text("None (Normal)").tag(OpenAIService.DebugErrorType.none)
-                        Text("Missing API Key").tag(OpenAIService.DebugErrorType.missingAPIKey)
-                        Text("Network Error").tag(OpenAIService.DebugErrorType.networkError)
-                        Text("Rate Limited (429)").tag(OpenAIService.DebugErrorType.rateLimited)
-                        Text("Invalid Response").tag(OpenAIService.DebugErrorType.invalidResponse)
-                        Text("Server Error (500)").tag(OpenAIService.DebugErrorType.serverError)
-                    }
-                    .onChange(of: selectedError) { _, newValue in
-                        OpenAIService.shared.debugSimulateError = newValue
-                    }
+                    Text("Bật để test app khi không có mạng hoặc API key")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
                 }
 
-                Section("Current Settings") {
-                    HStack {
-                        Text("Force Fallback")
-                        Spacer()
-                        Text(forceFallback ? "ON" : "OFF")
-                            .foregroundColor(forceFallback ? .red : .green)
-                    }
-                    HStack {
-                        Text("Error Type")
-                        Spacer()
-                        Text(errorTypeLabel(selectedError))
-                            .foregroundColor(selectedError == .none ? .green : .orange)
+                // MARK: - Clear Cache
+                Section("🗑️ Cache") {
+                    Button("Xóa cache & history") {
+                        OpenAIService.shared.clearCache()
+                        testResult = "✅ Đã xóa cache"
+                        testResultColor = .green
                     }
                 }
-
-                Section("Instructions") {
-                    Text("1. Enable 'Force Fallback' to test fallback sentences")
-                    Text("2. Select an error type to test specific error handling")
-                    Text("3. Go back and try generating a sentence")
-                    Text("4. Check console for debug logs (🧪)")
-                }
-                .font(.caption)
-                .foregroundColor(.secondary)
             }
-            .navigationTitle("🧪 Debug Settings")
+            .navigationTitle("🧪 Debug API")
             .onAppear {
-                // Sync with current state
+                checkAPIKey()
                 forceFallback = OpenAIService.shared.debugForceFallback
-                selectedError = OpenAIService.shared.debugSimulateError
             }
         }
     }
 
-    private func errorTypeLabel(_ type: OpenAIService.DebugErrorType) -> String {
-        switch type {
-        case .none: return "None"
-        case .missingAPIKey: return "Missing API Key"
-        case .networkError: return "Network Error"
-        case .rateLimited: return "Rate Limited"
-        case .invalidResponse: return "Invalid Response"
-        case .serverError: return "Server Error"
+    // MARK: - Check API Key
+    private func checkAPIKey() {
+        if let key = Bundle.main.infoDictionary?["OPENAI_API_KEY"] as? String,
+           !key.isEmpty,
+           key != "$(OPENAI_API_KEY)" {
+            let maskedKey = String(key.prefix(8)) + "..." + String(key.suffix(4))
+            apiKeyStatus = "✅ Có key: \(maskedKey)"
+            apiKeyColor = .green
+        } else {
+            apiKeyStatus = "❌ Chưa có API key"
+            apiKeyColor = .red
+        }
+    }
+
+    // MARK: - Test Real API (Generate Sentence)
+    private func testRealAPI() {
+        isTestingAPI = true
+        testResult = "Đang gọi API..."
+        testResultColor = .secondary
+        rawResponse = ""
+
+        Task {
+            do {
+                let startTime = Date()
+                let sentence = try await OpenAIService.shared.generateSentence(
+                    topic: "daily_life",
+                    targetBand: "6.5"
+                )
+                let duration = Date().timeIntervalSince(startTime)
+
+                await MainActor.run {
+                    testResult = "✅ Thành công! (\(String(format: "%.2f", duration))s)\n\n\"\(sentence.vietnamese)\""
+                    testResultColor = .green
+                    rawResponse = """
+                    Topic: \(sentence.topic)
+                    Band: \(sentence.targetBand)
+                    Hint: \(sentence.hint)
+                    Structures: \(sentence.keyStructures.joined(separator: ", "))
+                    """
+                    isTestingAPI = false
+                }
+            } catch {
+                await MainActor.run {
+                    testResult = "❌ Lỗi: \(error.localizedDescription)"
+                    testResultColor = .red
+                    rawResponse = "Error details:\n\(error)"
+                    isTestingAPI = false
+                }
+            }
+        }
+    }
+
+    // MARK: - Test Feedback API
+    private func testFeedbackAPI() {
+        isTestingAPI = true
+        testResult = "Đang gọi API chấm điểm..."
+        testResultColor = .secondary
+        rawResponse = ""
+
+        Task {
+            do {
+                let startTime = Date()
+                let feedback = try await OpenAIService.shared.getFeedback(
+                    vietnamese: "Tôi rất mệt sau một ngày làm việc.",
+                    translation: "I am very tired after a working day.",
+                    targetBand: "6.5"
+                )
+                let duration = Date().timeIntervalSince(startTime)
+
+                await MainActor.run {
+                    testResult = """
+                    ✅ Thành công! (\(String(format: "%.2f", duration))s)
+
+                    Overall Band: \(feedback.overallBand)
+                    - Lexical: \(feedback.criteria.lexicalResource.band)
+                    - Grammar: \(feedback.criteria.grammaticalRange.band)
+                    - Coherence: \(feedback.criteria.coherence.band)
+                    - Task: \(feedback.criteria.taskAchievement.band)
+                    """
+                    testResultColor = .green
+                    rawResponse = """
+                    Good points: \(feedback.goodPoints.joined(separator: ", "))
+
+                    Improved: \(feedback.improvedSentence)
+
+                    Explanation: \(feedback.explanation)
+                    """
+                    isTestingAPI = false
+                }
+            } catch {
+                await MainActor.run {
+                    testResult = "❌ Lỗi: \(error.localizedDescription)"
+                    testResultColor = .red
+                    rawResponse = "Error details:\n\(error)"
+                    isTestingAPI = false
+                }
+            }
         }
     }
 }
