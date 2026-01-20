@@ -3,9 +3,13 @@ import Foundation
 // MARK: - OpenAI Service
 class OpenAIService {
     static let shared = OpenAIService()
-    
+
     private let baseURL = "https://api.openai.com/v1/chat/completions"
-    
+
+    // Track recent sentences to avoid repetition
+    private var recentSentences: [String] = []
+    private let maxHistorySize = 10
+
     // Đọc API key từ Info.plist (được inject từ xcconfig)
     private var apiKey: String {
         guard let key = Bundle.main.infoDictionary?["OPENAI_API_KEY"] as? String,
@@ -16,11 +20,28 @@ class OpenAIService {
         }
         return key
     }
-    
+
     private init() {}
     
     // MARK: - Generate Vietnamese Sentence
     func generateSentence(topic: String, targetBand: String) async throws -> Sentence {
+        // Build history exclusion list
+        let historySection: String
+        if recentSentences.isEmpty {
+            historySection = ""
+        } else {
+            let historyList = recentSentences.enumerated()
+                .map { "- \($0.element)" }
+                .joined(separator: "\n")
+            historySection = """
+
+        IMPORTANT - Do NOT generate any of these previously used sentences:
+        \(historyList)
+
+        Generate a COMPLETELY DIFFERENT sentence with different vocabulary and structure.
+        """
+        }
+
         let prompt = """
         Generate a Vietnamese sentence for English translation practice.
 
@@ -32,6 +53,7 @@ class OpenAIService {
         - Complexity appropriate for someone aiming for Band \(targetBand)
         - Should allow for interesting vocabulary upgrades when translated
         - Include some idiomatic expressions or common phrases
+        - Be creative and varied in sentence structure\(historySection)
 
         Return ONLY valid JSON (no markdown, no backticks):
         {
@@ -42,16 +64,19 @@ class OpenAIService {
           "keyStructures": ["structure1", "structure2"]
         }
         """
-        
+
         let response: String = try await sendRequest(prompt: prompt)
-        
+
         guard let data = response.data(using: .utf8) else {
             throw OpenAIError.invalidResponse
         }
-        
+
         let decoder = JSONDecoder()
         let sentenceResponse = try decoder.decode(SentenceResponse.self, from: data)
-        
+
+        // Add to history to avoid repetition
+        addToHistory(sentenceResponse.vietnamese)
+
         return Sentence(
             vietnamese: sentenceResponse.vietnamese,
             topic: sentenceResponse.topic,
@@ -59,6 +84,14 @@ class OpenAIService {
             hint: sentenceResponse.hint,
             keyStructures: sentenceResponse.keyStructures
         )
+    }
+
+    /// Add sentence to history, maintaining max size
+    private func addToHistory(_ sentence: String) {
+        recentSentences.append(sentence)
+        if recentSentences.count > maxHistorySize {
+            recentSentences.removeFirst()
+        }
     }
     
     // MARK: - Get Feedback

@@ -55,7 +55,7 @@ class AppViewModel: ObservableObject {
         selectedTopic = topic
         isLoading = true
         errorMessage = nil
-        
+
         do {
             let sentence = try await openAI.generateSentence(
                 topic: topic.id,
@@ -65,19 +65,82 @@ class AppViewModel: ObservableObject {
             currentScreen = .translate
         } catch {
             handleError(error)
-            // Use fallback sentence
-            currentSentence = Sentence(
-                vietnamese: "Sau một ngày làm việc căng thẳng, tôi chỉ muốn về nhà nghỉ ngơi và thư giãn.",
-                topic: topic.id,
-                targetBand: targetBand.label,
-                hint: "Sử dụng các phrasal verbs và từ vựng nâng cao",
-                keyStructures: ["After + V-ing", "compound sentence"]
-            )
+            // Use varied fallback sentence based on topic
+            currentSentence = getFallbackSentence(for: topic)
             currentScreen = .translate
         }
-        
+
         isLoading = false
     }
+
+    // Track used fallback indices to avoid repetition
+    private var usedFallbackIndices: [String: Set<Int>] = [:]
+
+    private func getFallbackSentence(for topic: Topic) -> Sentence {
+        let fallbacks = fallbackSentences[topic.id] ?? fallbackSentences["daily_life"]!
+
+        // Get unused index
+        var usedIndices = usedFallbackIndices[topic.id] ?? []
+        if usedIndices.count >= fallbacks.count {
+            usedIndices.removeAll() // Reset when all used
+        }
+
+        var randomIndex: Int
+        repeat {
+            randomIndex = Int.random(in: 0..<fallbacks.count)
+        } while usedIndices.contains(randomIndex) && usedIndices.count < fallbacks.count
+
+        usedIndices.insert(randomIndex)
+        usedFallbackIndices[topic.id] = usedIndices
+
+        let (vietnamese, hint, structures) = fallbacks[randomIndex]
+        return Sentence(
+            vietnamese: vietnamese,
+            topic: topic.id,
+            targetBand: targetBand.label,
+            hint: hint,
+            keyStructures: structures
+        )
+    }
+
+    // Varied fallback sentences by topic
+    private let fallbackSentences: [String: [(String, String, [String])]] = [
+        "work_career": [
+            ("Sau một ngày làm việc căng thẳng, tôi chỉ muốn về nhà nghỉ ngơi và thư giãn.", "Sử dụng các phrasal verbs và từ vựng nâng cao", ["After + V-ing", "compound sentence"]),
+            ("Sếp tôi vừa thông báo rằng công ty sẽ tuyển thêm nhân viên mới vào tháng tới.", "Sử dụng reported speech và future tense", ["reported speech", "future plans"]),
+            ("Tôi đang cân nhắc chuyển sang một công việc mới vì muốn có nhiều cơ hội phát triển hơn.", "Sử dụng present continuous cho kế hoạch tương lai", ["present continuous", "reason clause"]),
+            ("Dự án này đòi hỏi sự phối hợp chặt chẽ giữa các phòng ban khác nhau.", "Sử dụng passive voice và formal vocabulary", ["passive voice", "require + noun"]),
+            ("Làm việc từ xa có nhiều ưu điểm nhưng đôi khi tôi cảm thấy thiếu sự kết nối với đồng nghiệp.", "Sử dụng contrast clause và expressing feelings", ["although/but", "feel + adjective"])
+        ],
+        "health_wellness": [
+            ("Bác sĩ khuyên tôi nên tập thể dục đều đặn và ăn uống lành mạnh hơn.", "Sử dụng reported speech và modal verbs", ["advise + to-infinitive", "comparative"]),
+            ("Mỗi sáng tôi đều dành 30 phút để thiền định và cảm thấy tâm trạng tốt hơn nhiều.", "Sử dụng time expressions và result clause", ["every + time", "feel + comparative"]),
+            ("Căng thẳng kéo dài có thể ảnh hưởng nghiêm trọng đến sức khỏe tinh thần và thể chất.", "Sử dụng modal verbs và formal vocabulary", ["can + verb", "affect + noun"]),
+            ("Tôi đã bỏ thói quen thức khuya và giờ ngủ đủ 8 tiếng mỗi đêm.", "Sử dụng present perfect và habits", ["have/has + past participle", "time duration"]),
+            ("Yoga giúp tôi giảm stress và cải thiện sự linh hoạt của cơ thể đáng kể.", "Sử dụng verb + object + infinitive", ["help + infinitive", "improve + noun"])
+        ],
+        "relationships": [
+            ("Mối quan hệ giữa tôi và gia đình ngày càng gắn bó hơn kể từ khi chúng tôi bắt đầu ăn tối cùng nhau mỗi ngày.", "Sử dụng comparatives và time clauses", ["more and more", "since + clause"]),
+            ("Bạn thân của tôi luôn ở bên cạnh và ủng hộ tôi trong những lúc khó khăn.", "Sử dụng present simple và prepositions", ["always + verb", "support + in"]),
+            ("Đôi khi việc giao tiếp hiệu quả còn quan trọng hơn cả việc có cùng quan điểm.", "Sử dụng comparatives và abstract nouns", ["more important than", "effective + noun"]),
+            ("Chúng tôi đã quen nhau hơn 10 năm và vẫn giữ liên lạc thường xuyên.", "Sử dụng present perfect continuous", ["have known", "keep in touch"]),
+            ("Sự tin tưởng là nền tảng quan trọng nhất trong bất kỳ mối quan hệ nào.", "Sử dụng superlatives và abstract concepts", ["the most important", "foundation of"])
+        ],
+        "travel": [
+            ("Chuyến du lịch Đà Nẵng năm ngoái là một trong những trải nghiệm đáng nhớ nhất của tôi.", "Sử dụng superlatives và past tense", ["one of the most", "past simple"]),
+            ("Tôi thích khám phá văn hóa địa phương hơn là chỉ tham quan các điểm du lịch nổi tiếng.", "Sử dụng prefer và comparisons", ["prefer + V-ing", "rather than"]),
+            ("Nếu có cơ hội, tôi muốn đi du lịch vòng quanh châu Âu trong vài tháng.", "Sử dụng conditional và wishes", ["if + clause", "would like to"]),
+            ("Việc lên kế hoạch trước giúp chuyến đi của chúng tôi suôn sẻ và tiết kiệm hơn.", "Sử dụng gerund as subject và comparatives", ["V-ing as subject", "more + adjective"]),
+            ("Tôi luôn mang theo máy ảnh để ghi lại những khoảnh khắc đẹp trong mỗi chuyến đi.", "Sử dụng purpose clause và present simple habits", ["to + infinitive", "in order to"])
+        ],
+        "daily_life": [
+            ("Mỗi buổi sáng tôi thức dậy lúc 6 giờ để có đủ thời gian chuẩn bị trước khi đi làm.", "Sử dụng time expressions và purpose clause", ["every morning", "in order to"]),
+            ("Cuối tuần tôi thường dành thời gian dọn dẹp nhà cửa và nấu những món ăn ngon.", "Sử dụng frequency adverbs và parallel structure", ["usually", "and + V-ing"]),
+            ("Gần đây tôi đang cố gắng giảm thời gian sử dụng điện thoại và đọc sách nhiều hơn.", "Sử dụng present continuous và try to", ["recently", "try to + verb"]),
+            ("Việc đi làm về muộn khiến tôi không có nhiều thời gian cho bản thân.", "Sử dụng gerund as subject và make/let", ["V-ing makes", "have time for"]),
+            ("Tôi đã tập được thói quen đọc sách trước khi đi ngủ và thấy ngủ ngon hơn nhiều.", "Sử dụng present perfect và result", ["have developed", "find + adjective"])
+        ]
+    ]
     
     // MARK: - Submit Translation
     func submitTranslation() async {
